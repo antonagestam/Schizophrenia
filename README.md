@@ -46,3 +46,5 @@ backend and uninstall Schizophrenia.
 
 License
 -------
+
+Schizophrenia is licensed under The MIT License. See the LICENSE file to read the full license.
