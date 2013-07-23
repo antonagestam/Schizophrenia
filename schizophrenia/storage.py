@@ -1,10 +1,19 @@
-import os, logging
+import os
 
 from django.core.files.storage import Storage, FileSystemStorage
 from django.conf import settings
 from django.utils.importlib import import_module
 
-logger = logging.getLogger(__name__)
+from .exceptions import VerificationException
+
+def get_storage(klass):
+    """Helper to import storage module and return instance"""
+    if isinstance(klass, str):
+        parts = klass.split('.')
+        storage_name = parts.pop()
+        module = import_module('.'.join(parts))
+        klass = getattr(module, storage_name)
+    return klass
 
 
 class SchizophreniaStorage(Storage):
@@ -16,18 +25,9 @@ class SchizophreniaStorage(Storage):
         if not target:
             target = settings.SCHIZOPHRENIA_TARGET_STORAGE
 
-        self.source = self.get_storage(source)
-        self.target = self.get_storage(target)
+        self.source = get_storage(source)()
+        self.target = get_storage(target)()
         self.downloads = FileSystemStorage(settings.SCHIZOPHRENIA_CACHE_DIR)
-
-    def get_storage(self, klass):
-        """Import storage module and return instance"""
-        if isinstance(klass, str):
-            parts = klass.split('.')
-            storage_name = parts.pop()
-            module = import_module('.'.join(parts))
-            klass = getattr(module, storage_name)()
-        return klass
 
     def download(self, name):
         """Download file and return instance of local File"""
@@ -35,22 +35,29 @@ class SchizophreniaStorage(Storage):
         self.downloads.save(name, remote_file)
         return self.downloads.open(name)
 
-    def sync(self, name, verify=False):
+    def sync(self, name, verify=False, cleanup=True):
         """Get file from source storage and upload to target"""
 
         local_file = self.download(name)
 
-        if self.target.exists(name):
+        if self.issynced(name):
             self.target.delete(name)
 
         self.target.save(name, local_file)
 
-        self.downloads.delete(name)
-        self.cleanup()
+        if verify:
+            try:
+                self.verify(name)
+            except VerificationException:
+                raise
+            finally:
+                self.downloads.delete(name)
+                if cleanup:
+                    self.cleanup()
 
-        if verify and not self.verify(name):
-            logger.error("Sync verification failed for '%s'" % name)
-            return False
+        self.downloads.delete(name)
+        if cleanup:
+            self.cleanup()
 
         return True
 
@@ -59,7 +66,15 @@ class SchizophreniaStorage(Storage):
         return self.target.exists(name)
 
     def verify(self, name):
-        return self.target.open(name).read() == self.source.open(name).read()
+        if self.downloads.exists(name):
+            comparison = self.downloads
+        else:
+            comparison = self.source
+
+        if self.target.open(name).read() != comparison.open(name).read():
+            raise VerificationException("Sync verification failed for '%s'"
+                                        % name)
+        return True
 
     def _remove_empty_folders(self, path):
         if not os.path.isdir(path):
@@ -131,9 +146,9 @@ class SchizophreniaStorage(Storage):
         return self.source.size(name)
 
     def url(self, name):
-        url = self.target.url(name)
+        return self.source.url(name)
 
-        if url is None:
-            url = self.source.url(name)
 
-        return url
+if getattr(settings, 'SCHIZOPHRENIA_ALIAS_TARGET_STORAGE', False):
+    target_storage = get_storage(settings.SCHIZOPHRENIA_TARGET_STORAGE)
+    SchizophreniaStorage = target_storage
