@@ -18,16 +18,16 @@ Put this in settings file:
     # A directory where Schizophrenia can put temporary files
     SCHIZOPHRENIA_CACHE_DIR = './.schizophrenia_cache/'
     
-Migrating
----------
+Migrating files
+---------------
 
 To migrate all your files to your new storage backend, run the command below. This will
 copy all of your files from your source storage to your target storage.
 
     $ python manage.py schizosync --verbosity=3 --verify
     
-Converting
-----------
+Converting your project
+-----------------------
 
 Syncing all the files might take some time but should be fairly straight-forward. To
 automatically start using your new backend once the transfer is done, you can put this
@@ -39,7 +39,10 @@ in your settings file:
 And then run the command like this:
 
     $ python manage.py schizosync --verbosity=3 --verify; export SCHIZOPHRENIA_ALIAS_ON=1
+    
+As you can see it's easy to create a logic for when to switch to your target storage backend.
+The next time you deploy code you'd probably want to set `DEFAULT_FILE_STORAGE` to your new
+backend and uninstall Schizophrenia.
 
 License
 -------
--
