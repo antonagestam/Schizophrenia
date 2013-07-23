@@ -72,8 +72,8 @@ class Command(NoArgsCommand):
                         action = "Synced"
                     else:
                         action = "Failed to sync"
-                except VerificationException:
-                    action = "Failed to verify sync of"
+                except VerificationException, e:
+                    raise CommandError('VerificationException: %s' % e.message)
                 finally:
                     self.log("%(action)s '%(filename)s' from '%(source)s' to "
                              "'%(target)s'" % {'action': action,
