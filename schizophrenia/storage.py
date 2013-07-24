@@ -37,13 +37,15 @@ class SchizophreniaStorage(Storage):
         self.downloads.save(name, remote_file)
         return self.downloads.open(name)
 
-    def sync(self, name, verify=False, cleanup=True):
+    def sync(self, name, verify=False, cleanup=True, clear=True):
         """Get file from source storage and upload to target"""
 
         local_file = self.download(name)
 
-        if self.issynced(name):
+        if self.issynced(name) and clear:
             self.target.delete(name)
+        elif not clear:
+            return True
 
         self.target.save(name, local_file)
 

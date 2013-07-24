@@ -20,8 +20,15 @@ class Command(NoArgsCommand):
     """
     option_list = NoArgsCommand.option_list + (
         make_option('--verify',
-            action='store_true', dest='verify', default=False,
-            help="Verify synced files after upload."),
+                    action='store_true',
+                    dest='verify',
+                    default=False,
+                    help="Verify synced files after upload."),
+        make_option('--clear',
+                    action='store_true',
+                    dest='clear',
+                    default=False,
+                    help="Clear files that already exists on target storage.")
     )
     help = "Syncs files between Schizophrenias storage backends."
     requires_model_validation = True
@@ -36,6 +43,7 @@ class Command(NoArgsCommand):
         """Set instance variables based on an options dict"""
         self.verbosity = int(options.get('verbosity', 1))
         self.verify = options['verify']
+        self.clear = options['clear']
 
     def get_fields(self):
         """Get all FileFields that are using SchizophreniaStorage"""
@@ -60,6 +68,9 @@ class Command(NoArgsCommand):
         source_storage = storage.source.__class__.__name__
         target_storage = storage.target.__class__.__name__
 
+        count_success = 0
+        count_failure = 0
+
         for field in fields:
             objects = field.model.objects.all()
             for obj in objects:
@@ -70,12 +81,16 @@ class Command(NoArgsCommand):
                     continue
 
                 try:
-                    if storage.sync(filename, self.verify, False):
-                        action = "Synced"
-                    else:
-                        action = "Failed to sync"
+                    storage.sync(filename,
+                                 verify=self.verify,
+                                 cleanup=False,
+                                 clear=self.clear)
+                    action = "Synced"
+                    count_success += 1
                 except VerificationException, e:
-                    raise CommandError('VerificationException: %s' % e.message)
+                    action = ("Failed to sync due to VerificationException: "
+                              "'%s':" % e.message)
+                    count_failure += 1
                 finally:
                     self.log("%(action)s '%(filename)s' from '%(source)s' to "
                              "'%(target)s'" % {'action': action,
@@ -83,7 +98,12 @@ class Command(NoArgsCommand):
                                                'source': source_storage,
                                                'target': target_storage})
 
+        # Cleanup cache directories
         storage.cleanup()
+
+        self.log("%(success)i files are synced, failed to sync %(failure) "
+                 "files." % {'success': count_success,
+                             'failure': count_failure})
 
     def log(self, msg, level=2):
         """
