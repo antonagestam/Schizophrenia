@@ -41,11 +41,13 @@ class SchizophreniaStorage(Storage):
         """Get file from source storage and upload to target"""
 
         local_file = self.download(name)
+        exists = self.issynced(name)
 
-        if self.issynced(name) and clear:
-            self.target.delete(name)
-        elif not clear:
-            return True
+        if exists:
+            if clear:
+                self.target.delete(name)
+            else:
+                return True
 
         self.target.save(name, local_file)
 
