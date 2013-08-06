@@ -2,11 +2,15 @@
 
 import os
 
+from django.core.cache import cache
+from django.core.files.base import File
 from django.core.files.storage import Storage, FileSystemStorage
 from django.conf import settings
 from django.utils.importlib import import_module
 
+
 from .exceptions import VerificationException
+
 
 def get_storage(klass):
     """Helper to import storage module and return instance"""
@@ -16,6 +20,12 @@ def get_storage(klass):
         module = import_module('.'.join(parts))
         klass = getattr(module, storage_name)
     return klass
+
+
+class CompatibleFile(File):
+    """Hack to deal with s3Boto not assuming Django storage-compatible file"""
+    def seek(self, a, *args, **kwargs):
+        super(CompatibleFile, self).seek(a)
 
 
 class SchizophreniaStorage(Storage):
@@ -107,11 +117,22 @@ class SchizophreniaStorage(Storage):
         """Always reads from source storage"""
         return self.source._open(name, *args, **kwargs)
 
-    def _save(self, *args, **kwargs):
+    def _storage_save(self, storage, name, content):
+        """Save to storage"""
+
+        try:
+            name = storage.save(name, content)
+        except TypeError:
+            content = CompatibleFile(file=content)
+            name = storage.save(name, content)
+
+        return name
+
+    def _save(self, name, content):
         """Saves both source and target but returns value of target storage"""
 
-        source_name = self.source._save(*args, **kwargs)
-        target_name = self.target._save(*args, **kwargs)
+        source_name = self._storage_save(self.source, name, content)
+        target_name = self._storage_save(self.target, name, content)
 
         if source_name != target_name:
             raise ValueError("Storages saved with different names")
@@ -120,7 +141,7 @@ class SchizophreniaStorage(Storage):
 
     def get_available_name(self, name):
         source_name = self.source.get_available_name(name)
-        target_name = self.target.get_available_name(name)
+        target_name = self.target.get_available_name(source_name)
 
         if source_name != target_name:
             raise ValueError("Storages returned different values from "
