@@ -82,9 +82,7 @@ class Command(NoArgsCommand):
 
                 try:
                     storage.sync(filename,
-                                 verify=self.verify,
-                                 cleanup=False,
-                                 clear=self.clear)
+                                 verify=self.verify)
                     action = "Synced"
                     count_success += 1
                 except VerificationException, e:
@@ -99,9 +97,9 @@ class Command(NoArgsCommand):
                                                'target': target_storage})
 
         # Cleanup cache directories
-        storage.cleanup()
+        storage.cleanup(force=True)
 
-        self.log("%(success)i files are synced, failed to sync %(failure) "
+        self.log("%(success)i files are synced, failed to sync %(failure)i "
                  "files." % {'success': count_success,
                              'failure': count_failure})
 

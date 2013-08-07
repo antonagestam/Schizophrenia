@@ -5,7 +5,7 @@ from setuptools import find_packages
 
 setup(
     name='Schizophrenia',
-    version='0.0.1',
+    version='0.1.0',
     description='A Django Storage with multiple personalitie... storage '
                 'backends. Created for the purpose of migrating from one '
                 'default storage backend to another.',

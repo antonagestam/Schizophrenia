@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import os
+import logging
+import shutil
 
 from django.core.cache import cache
 from django.core.files.base import File
@@ -8,8 +10,10 @@ from django.core.files.storage import Storage, FileSystemStorage
 from django.conf import settings
 from django.utils.importlib import import_module
 
-
 from .exceptions import VerificationException
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_storage(klass):
@@ -29,6 +33,8 @@ class CompatibleFile(File):
 
 
 class SchizophreniaStorage(Storage):
+    SYNCED = 'synced'
+    VERIFIED = 'verified'
 
     def __init__(self, source=None, target=None):
         if not source:
@@ -43,38 +49,65 @@ class SchizophreniaStorage(Storage):
 
     def download(self, name):
         """Download file and return instance of local File"""
+        if self.downloads.exists(name):
+            return self.downloads.open(name)
         remote_file = self.source.open(name)
         self.downloads.save(name, remote_file)
         return self.downloads.open(name)
 
-    def sync(self, name, verify=False, cleanup=True, clear=True):
+    def _get_file_cache_key(self, name):
+        return 'schizophrenia_state_%s' % name
+
+    def sync(self, name, verify=False):
         """Get file from source storage and upload to target"""
 
-        local_file = self.download(name)
-        exists = self.issynced(name)
+        logger.debug('Checking cached state ...')
 
-        if exists:
-            if clear:
-                self.target.delete(name)
-            else:
-                return True
+        # Check cached state, return if synced
+        cache_key = self._get_file_cache_key(name)
+        cached_state = cache.get(cache_key, None)
 
-        self.target.save(name, local_file)
-
-        if verify:
+        if cached_state == self.VERIFIED:
+            logger.info('File was verified, skipping')
+            cache.set(cache_key, self.VERIFIED)
+            return True
+        elif cached_state == self.SYNCED and not verify:
+            logger.info('File was synced, skipping because verify=False')
+            return True
+        elif cached_state == self.SYNCED or self.target.exists(name):
+            logger.info('File was synced, verifying ...')
+            # If file exists on target, verify. Return if synced
             try:
                 self.verify(name)
+            except VerificationException:
+                logger.info("File didn't verify, syncing again ...")
+                cached_state = None
+                cache.delete(cache_key)
+            else:
+                logger.info('File verified OK')
+                cache.set(cache_key, self.VERIFIED)
+                return True
+
+        # Sync
+        logger.debug('Downloading source file ...')
+        local_file = self.download(name)
+        logger.debug('Uploading to target storage ...')
+        self.target.save(name, local_file)
+        cache.set(cache_key, self.SYNCED)
+
+        # Verify
+        if verify:
+            logger.debug('Verifying ...')
+            try:
+                self.verify(name)
+                logger.debug('Verified OK')
+                cache.set(cache_key, self.VERIFIED)
             except VerificationException:
                 raise
             finally:
                 self.downloads.delete(name)
-                if cleanup:
-                    self.cleanup()
 
         self.downloads.delete(name)
-        if cleanup:
-            self.cleanup()
-
         return True
 
     def issynced(self, name):
@@ -82,15 +115,17 @@ class SchizophreniaStorage(Storage):
         return self.target.exists(name)
 
     def verify(self, name):
-        if self.downloads.exists(name):
-            comparison = self.downloads
-        else:
-            comparison = self.source
-
-        if self.target.open(name).read() != comparison.open(name).read():
+        if self.target.open(name).read() != self.download(name).read():
             raise VerificationException("Sync verification failed for '%s'"
                                         % name)
         return True
+
+    def cleanup(self, force=False):
+        """Cleanup empty directories that might be left over from downloads"""
+        if force:
+            shutil.rmtree(settings.SCHIZOPHRENIA_CACHE_DIR)
+        else:
+            self._remove_empty_folders(settings.SCHIZOPHRENIA_CACHE_DIR)
 
     def _remove_empty_folders(self, path):
         if not os.path.isdir(path):
@@ -109,13 +144,10 @@ class SchizophreniaStorage(Storage):
         if len(files) == 0:
             os.rmdir(path)
 
-    def cleanup(self):
-        """Cleanup empty directories that might be left over from downloads"""
-        self._remove_empty_folders(settings.SCHIZOPHRENIA_CACHE_DIR)
-
     def _open(self, name, *args, **kwargs):
-        """Always reads from source storage"""
-        return self.source._open(name, *args, **kwargs)
+        """Reads from target storage if verified, otherwise source"""
+        storage = self._get_verified_storage(name)
+        return storage.open(name, *args, **kwargs)
 
     def _storage_save(self, storage, name, content):
         """Save to storage"""
@@ -159,23 +191,28 @@ class SchizophreniaStorage(Storage):
 
         return target_name
 
+    def _get_verified_storage(self, name):
+        if cache.get(self._get_file_cache_key(name), None) == self.VERIFIED:
+            storage = self.target
+        else:
+            storage = self.source
+        return storage
+
     def delete(self, name):
         self.target.delete(name)
         return self.source.delete(name)
 
     def exists(self, name):
-        return self.source.exists(name)
+        storage = self._get_verified_storage(name)
+        return storage.exists(name)
 
     def listdir(self, path):
         return self.source.listdir(path)
 
     def size(self, name):
-        return self.source.size(name)
+        storage = self._get_verified_storage(name)
+        return storage.size(name)
 
     def url(self, name):
-        return self.source.url(name)
-
-
-if getattr(settings, 'SCHIZOPHRENIA_ALIAS_TARGET_STORAGE', False):
-    target_storage = get_storage(settings.SCHIZOPHRENIA_TARGET_STORAGE)
-    SchizophreniaStorage = target_storage
+        storage = self._get_verified_storage(name)
+        return storage.url(name)
