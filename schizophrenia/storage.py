@@ -9,7 +9,6 @@ from django.core.files.base import File
 from django.core.files.storage import Storage, FileSystemStorage
 from django.conf import settings
 from django.utils.importlib import import_module
-from django.utils.functional import SimpleLazyObject
 
 from .exceptions import VerificationException
 
